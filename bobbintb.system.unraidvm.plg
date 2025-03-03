@@ -18,14 +18,16 @@
 Initial version
 </CHANGES>
 
-<!-- SOURCE FILES -->
-<FILE Name="UnRAID.form.php" Run="--install-new --reinstall">
+
+<FILE Name="/usr/local/emhttp/plugins/dynamix.vm.manager/templates/UnRAID.form.php">
 <URL>https://raw.githubusercontent.com/&author;/&repo;/refs/heads/main/UnRAID.form.php</URL>
-<MD5>&MD5;</MD5>
 </FILE>
 
-<!-- INSTALL SCRIPT -->
-<FILE Name="libvirt_helpers.php.patch" Run="patch /usr/local/emhttp/plugins/dynamix.vm.manager/include/libvirt_helpers.php < libvirt_helpers.patch" Method="install">
+<FILE Name="/usr/local/emhttp/plugins/dynamix.vm.manager/templates/UnRAID.form.php">
+<LOCAL>/boot/config/plugins/&name;/UnRAID.form.php</LOCAL>
+</FILE>
+
+<FILE Name="/boot/config/plugins/&name;/libvirt_helpers.php.patch" Run="patch /usr/local/emhttp/plugins/dynamix.vm.manager/include/libvirt_helpers.php &lt; /boot/config/plugins/&name;/libvirt_helpers.php.patch">
 <URL>https://raw.githubusercontent.com/&author;/&repo;/refs/heads/main/libvirt_helpers.php.patch</URL>
 <MD5>dba71cd88ef148a53abbe850f60ae90c</MD5>
 </FILE>
@@ -33,8 +35,8 @@ Initial version
 <!-- REMOVE SCRIPT -->
 <FILE Run="/bin/bash" Method="remove">
 <INLINE>
-mv /usr/local/emhttp/plugins/dynamix.vm.manager/include/libvirt_helpers.php.original /usr/local/emhttp/plugins/dynamix.vm.manager/include/libvirt_helpers.php
-rm /usr/local/emhttp/plugins/dynamix.vm.manager/templates/UnRAID.form.php
+patch -R /usr/local/emhttp/plugins/dynamix.vm.manager/include/libvirt_helpers.php &lt; /boot/config/plugins/&name;/libvirt_helpers.php.patch
+rm -f /usr/local/emhttp/plugins/dynamix.vm.manager/templates/UnRAID.form.php
 </INLINE>
 </FILE>
 
