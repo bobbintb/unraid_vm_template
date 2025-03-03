@@ -11,7 +11,7 @@
 <!ENTITY version     "2025.03.03">
 <!ENTITY MD5         "74871e7b39e0e1d93537929d9632cd3a">
 ]>
-<PLUGIN name="&name;" author="&author;" repo="&repo;" launch="&launch;" pluginURL="&pluginURL;" source="&source;" icon="&icon;" min="&min;" version="&version;" MD5="&MD5;">
+<PLUGIN name="&name;" author="&author;" repo="&repo;" pluginURL="&pluginURL;" source="&source;" icon="&icon;" min="&min;" version="&version;" MD5="&MD5;">
 
 <CHANGES>
 2025.03.03
