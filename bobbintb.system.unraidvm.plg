@@ -27,6 +27,10 @@ Initial version
 <LOCAL>/boot/config/plugins/&name;/UnRAID.form.php</LOCAL>
 </FILE>
 
+<FILE Name="/usr/local/emhttp/plugins/&name;/README.md">
+<URL>https://raw.githubusercontent.com/bobbintb/unraid_vm_template/refs/heads/main/README.md</URL>
+</FILE>
+
 <FILE Name="/boot/config/plugins/&name;/libvirt_helpers.php.patch" Run="patch /usr/local/emhttp/plugins/dynamix.vm.manager/include/libvirt_helpers.php &lt; /boot/config/plugins/&name;/libvirt_helpers.php.patch">
 <URL>https://raw.githubusercontent.com/&author;/&repo;/refs/heads/main/libvirt_helpers.php.patch</URL>
 <MD5>dba71cd88ef148a53abbe850f60ae90c</MD5>
@@ -37,6 +41,7 @@ Initial version
 <INLINE>
 patch -R /usr/local/emhttp/plugins/dynamix.vm.manager/include/libvirt_helpers.php &lt; /boot/config/plugins/&name;/libvirt_helpers.php.patch
 rm -f /usr/local/emhttp/plugins/dynamix.vm.manager/templates/UnRAID.form.php
+rm -dr /usr/local/emhttp/plugins/&name;
 </INLINE>
 </FILE>
 
