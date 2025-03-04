@@ -130,6 +130,7 @@
 			$strAllCmd = "#!/bin/bash\n\n";
 			$strAllCmd .= $strDownloadCmd . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
 			$strAllCmd .= $strExtractCmd . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
+			$strAllCmd .=  'sed -i 's/\bappend\b/append unraidlabel=UNRAIDVM/g'  >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
 			$strAllCmd .= $strDdCmd . ' 2>/dev/null && ';
 			$strAllCmd .= $partedCmd . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
 			$strAllCmd .= $strLoopDevice . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
