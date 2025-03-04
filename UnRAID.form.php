@@ -108,7 +108,7 @@
 			$partedCmd = 'parted ' . $strImgFile . ' --script mklabel msdos && parted ' . $strImgFile . ' --script mkpart primary fat32 1MiB 100%';
 			$strLoopDevice = 'LOOP_DEVICE=$(losetup --find --show --partscan ' . $strImgFile . ')';
 			$strPartition = 'PARTITION="${LOOP_DEVICE}p1"';
-			$partitionCmd = 'mkfs.vfat -F 32 -n UNRAID $PARTITION';
+			$partitionCmd = 'mkfs.vfat -F 32 -n UNRAIDVM $PARTITION';
 			$installSyslinuxCmd = $strExtractTmpDir . '/syslinux/syslinux_linux -f --install $PARTITION 1>/dev/null 2>/dev/null';
 			$mcopyCmd = 'mcopy -i "$PARTITION" -s ' . $strExtractTmpDir . '/* ::/';
 			$detachCmd = 'losetup -d "$LOOP_DEVICE"';
