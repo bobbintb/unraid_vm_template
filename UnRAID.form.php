@@ -121,8 +121,8 @@
 
 			$strDownloadCmd = 'wget -nv -c -O ' . escapeshellarg($strZipFile) . ' ' . escapeshellarg($arrDownloadUnRAID['url']);
 			$strDownloadPgrep = '-f "wget.*' . $strZipFile . '.*' . $arrDownloadUnRAID['url'] . '"';
-			$strDdCmd = 'dd if=/dev/zero of=' . $strImgFile . ' bs=1M count=16384';
-			$strDdPgrep = '-f "dd if=/dev/zero of=' . $strImgFile . ' bs=1M count=16384"';
+			$strDdCmd = 'dd if=/dev/zero of=' . $strImgFile . ' bs=1M count=2048';
+			$strDdPgrep = '-f "dd if=/dev/zero of=' . $strImgFile . ' bs=1M count=2048"';
 			$strExtractCmd = 'unzip -o ' . escapeshellarg($strZipFile) . ' -d ' . escapeshellarg($strExtractTmpDir);
 			$strExtractPgrep = '-f "unzip.*' . $strZipFile . '.*' . $strExtractTmpDir . '"';
 			$strCleanCmd = '(chmod 777 ' . escapeshellarg($_POST['download_path']) . ' ' . escapeshellarg($strImgFile) . '; chown nobody:users ' . escapeshellarg($_POST['download_path']) . ' ' . escapeshellarg($strImgFile) . '; rm ' . escapeshellarg($strZipFile) . '; rm -dr ' . escapeshellarg($strExtractTmpDir) . ')';
