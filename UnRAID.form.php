@@ -110,6 +110,7 @@
 			$strPartition = 'PARTITION="${LOOP_DEVICE}p1"';
 			$partitionCmd = 'mkfs.vfat -F 32 -n UNRAIDVM $PARTITION';
 			$installSyslinuxCmd = $strExtractTmpDir . '/syslinux/syslinux_linux -f --install $PARTITION 1>/dev/null 2>/dev/null';
+			$modifySyslinuxCfg =  "sed -i 's/\\bappend\\b/append unraidlabel=UNRAIDVM/g' " . $strExtractTmpDir . '/syslinux/syslinux.cfg';
 			$mcopyCmd = 'mcopy -i "$PARTITION" -s ' . $strExtractTmpDir . '/* ::/';
 			$detachCmd = 'losetup -d "$LOOP_DEVICE"';
 
@@ -121,8 +122,9 @@
 
 			$strDownloadCmd = 'wget -nv -c -O ' . escapeshellarg($strZipFile) . ' ' . escapeshellarg($arrDownloadUnRAID['url']);
 			$strDownloadPgrep = '-f "wget.*' . $strZipFile . '.*' . $arrDownloadUnRAID['url'] . '"';
-			$strDdCmd = 'dd if=/dev/zero of=' . $strImgFile . ' bs=1M count=2048';
-			$strDdPgrep = '-f "dd if=/dev/zero of=' . $strImgFile . ' bs=1M count=2048"';
+			sscanf($_POST['disk_size'], "%d%s", $size, $unit);
+			$strDdCmd = 'dd if=/dev/zero of=' . $strImgFile . ' bs=1$unit count=$size';
+			$strDdPgrep = '-f "dd if=/dev/zero of=' . $strImgFile . ' bs=1$unit count=$size"';
 			$strExtractCmd = 'unzip -o ' . escapeshellarg($strZipFile) . ' -d ' . escapeshellarg($strExtractTmpDir);
 			$strExtractPgrep = '-f "unzip.*' . $strZipFile . '.*' . $strExtractTmpDir . '"';
 			$strCleanCmd = '(chmod 777 ' . escapeshellarg($_POST['download_path']) . ' ' . escapeshellarg($strImgFile) . '; chown nobody:users ' . escapeshellarg($_POST['download_path']) . ' ' . escapeshellarg($strImgFile) . '; rm ' . escapeshellarg($strZipFile) . '; rm -dr ' . escapeshellarg($strExtractTmpDir) . ')';
@@ -136,6 +138,7 @@
 			$strAllCmd .= $strPartition . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
 			$strAllCmd .= $partitionCmd . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
 			$strAllCmd .= $installSyslinuxCmd . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
+			$strAllCmd .= $modifySyslinuxCfg  . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
 			$strAllCmd .= $mcopyCmd . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
 			$strAllCmd .= $detachCmd . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
 			$strAllCmd .= $strCleanCmd . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
@@ -517,6 +520,18 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 		</table>
 		<blockquote class="inline_help">
 			<p>Choose a folder where the UnRAID image will downloaded to</p>
+		</blockquote>
+
+		<table>
+			<tr>
+				<td>_(Disk Size)_:</td>
+				<td>
+					<input type="text" autocomplete="off" spellcheck="false" value="2G" id="disk_size" placeholder="e.g. 10M, 1G, 10G...">
+				</td>
+			</tr>
+		</table>
+		<blockquote class="inline_help">
+			<p>Choose a disk size</p>
 		</blockquote>
 
 		<table>
