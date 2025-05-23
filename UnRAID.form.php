@@ -123,8 +123,8 @@
 			$strDownloadCmd = 'wget -nv -c -O ' . escapeshellarg($strZipFile) . ' ' . escapeshellarg($arrDownloadUnRAID['url']);
 			$strDownloadPgrep = '-f "wget.*' . $strZipFile . '.*' . $arrDownloadUnRAID['url'] . '"';
 			sscanf($_POST['disk_size'], "%d%s", $size, $unit);
-			$strDdCmd = 'dd if=/dev/zero of=' . $strImgFile . ' bs=1$unit count=$size';
-			$strDdPgrep = '-f "dd if=/dev/zero of=' . $strImgFile . ' bs=1$unit count=$size"';
+			$strDdCmd = 'dd if=/dev/zero of=' . $strImgFile . ' bs=1' . $unit . ' count=' . $size;
+			$strDdPgrep = '-f "dd if=/dev/zero of=' . $strImgFile . ' bs=1' . $unit . 'count=' . $size . '"';
 			$strExtractCmd = 'unzip -o ' . escapeshellarg($strZipFile) . ' -d ' . escapeshellarg($strExtractTmpDir);
 			$strExtractPgrep = '-f "unzip.*' . $strZipFile . '.*' . $strExtractTmpDir . '"';
 			$strCleanCmd = '(chmod 777 ' . escapeshellarg($_POST['download_path']) . ' ' . escapeshellarg($strImgFile) . '; chown nobody:users ' . escapeshellarg($_POST['download_path']) . ' ' . escapeshellarg($strImgFile) . '; rm ' . escapeshellarg($strZipFile) . '; rm -dr ' . escapeshellarg($strExtractTmpDir) . ')';
