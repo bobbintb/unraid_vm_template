@@ -105,45 +105,41 @@
 			$strLogFile = $strZipFile . '.log';
 			$strImgFile = $_POST['download_path'] . basename($arrDownloadUnRAID['url'], 'zip') . 'img';
 			$strExtractTmpDir = '/tmp/UNRAID_x';
-			$partedCmd = 'parted ' . $strImgFile . ' --script mklabel msdos && parted ' . $strImgFile . ' --script mkpart primary fat32 1MiB 100%';
-			$strLoopDevice = 'LOOP_DEVICE=$(losetup --find --show --partscan ' . $strImgFile . ')';
-			$strPartition = 'PARTITION="${LOOP_DEVICE}p1"';
-			$partitionCmd = 'mkfs.vfat -F 32 -n UNRAIDVM $PARTITION';
-			$installSyslinuxCmd = $strExtractTmpDir . '/syslinux/syslinux_linux -f --install $PARTITION 1>/dev/null 2>/dev/null';
-			$modifySyslinuxCfg =  "sed -i 's/\\bappend\\b/append unraidlabel=UNRAIDVM/g' " . $strExtractTmpDir . '/syslinux/syslinux.cfg';
-			$mcopyCmd = 'mcopy -i "$PARTITION" -s ' . $strExtractTmpDir . '/* ::/';
-			$detachCmd = 'losetup -d "$LOOP_DEVICE"';
-
+			// $modifySyslinuxCfg = "sed -i 's/\\bappend\\b/append unraidlabel=UNRAIDVM/g'" . $strExtractTmpDir . '/syslinux/syslinux.cfg';
+			
 			// Save to strUnRAIDConfig
 			$arrUnRAIDConfig[$_POST['download_version']] = $strImgFile;
 			$text = '';
 			foreach ($arrUnRAIDConfig as $key => $value) $text .= "$key=\"$value\"\n";
 			file_put_contents($strUnRAIDConfig, $text);
-
-			$strDownloadCmd = 'wget -nv -c -O ' . escapeshellarg($strZipFile) . ' ' . escapeshellarg($arrDownloadUnRAID['url']);
 			$strDownloadPgrep = '-f "wget.*' . $strZipFile . '.*' . $arrDownloadUnRAID['url'] . '"';
-			sscanf($_POST['disk_size'], "%d%s", $size, $unit);
-			$strDdCmd = 'dd if=/dev/zero of=' . $strImgFile . ' bs=1' . $unit . ' count=' . $size;
-			$strDdPgrep = '-f "dd if=/dev/zero of=' . $strImgFile . ' bs=1' . $unit . 'count=' . $size . '"';
-			$strExtractCmd = 'unzip -o ' . escapeshellarg($strZipFile) . ' -d ' . escapeshellarg($strExtractTmpDir);
+			$strDdPgrep = '-f "dd if=/dev/zero of=' . $strImgFile . ' bs=1M count=32768"';
 			$strExtractPgrep = '-f "unzip.*' . $strZipFile . '.*' . $strExtractTmpDir . '"';
-			$strCleanCmd = '(chmod 777 ' . escapeshellarg($_POST['download_path']) . ' ' . escapeshellarg($strImgFile) . '; chown nobody:users ' . escapeshellarg($_POST['download_path']) . ' ' . escapeshellarg($strImgFile) . '; rm ' . escapeshellarg($strZipFile) . '; rm -dr ' . escapeshellarg($strExtractTmpDir) . ')';
-			$strCleanPgrep = '-f "chmod.*chown.*rm.*"';
-			$strAllCmd = "#!/bin/bash\n\n";
-			$strAllCmd .= $strDownloadCmd . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
-			$strAllCmd .= $strExtractCmd . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
-			$strAllCmd .= $strDdCmd . ' 2>/dev/null && ';
-			$strAllCmd .= $partedCmd . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
-			$strAllCmd .= $strLoopDevice . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
-			$strAllCmd .= $strPartition . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
-			$strAllCmd .= $partitionCmd . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
-			$strAllCmd .= $installSyslinuxCmd . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
-			$strAllCmd .= $modifySyslinuxCfg  . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
-			$strAllCmd .= $mcopyCmd . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
-			$strAllCmd .= $detachCmd . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
-			$strAllCmd .= $strCleanCmd . ' >>' . escapeshellarg($strLogFile) . ' 2>&1 && ';
-			$strAllCmd .= 'rm ' . escapeshellarg($strLogFile) . ' && ';
-			$strAllCmd .= 'rm ' . escapeshellarg($strInstallScript);
+			
+			$strAllCmd = <<<EOD
+			#!/bin/bash
+
+			{
+			  wget -nv -c -O {$strZipFile} {$arrDownloadUnRAID['url']}
+			  unzip -o {$strZipFile} -d {$strExtractTmpDir}
+			  dd if=/dev/zero of={$strImgFile} bs=1M count=32768
+			  parted {$strImgFile} --script mklabel msdos && parted {$strImgFile} --script mkpart primary fat32 1MiB 100%
+			  LOOP_DEVICE=\$(losetup --find --show --partscan {$strImgFile})
+			  PARTITION="\${LOOP_DEVICE}p1"
+			  mkfs.vfat -F 32 -n UNRAIDVM \$PARTITION
+			  {$strExtractTmpDir}/syslinux/syslinux_linux -f --install \$PARTITION 1>/dev/null 2>/dev/null
+			  sed -i 's/\bappend\b/append unraidlabel=UNRAIDVM/g' ${strExtractTmpDir}/syslinux/syslinux.cfg
+			  mcopy -i "\$PARTITION" -s {$strExtractTmpDir}/* ::/
+			  losetup -d "\$LOOP_DEVICE"
+			  chmod 777 {$_POST['download_path']} {$strImgFile}
+			  chown nobody:users {$_POST['download_path']} {$strImgFile}
+			  rm {$strZipFile}
+			  rm -dr {$strExtractTmpDir}
+			} >> {$strLogFile} 2>&1
+			rm {$strLogFile}
+			rm /tmp/UnRAID_{$_POST['download_version']}_install.sh
+			EOD;
+
 
 			$reply = [];
 			switch (true) {
@@ -524,18 +520,6 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 
 		<table>
 			<tr>
-				<td>_(Disk Size)_:</td>
-				<td>
-					<input type="text" autocomplete="off" spellcheck="false" value="2G" id="disk_size" placeholder="e.g. 10M, 1G, 10G...">
-				</td>
-			</tr>
-		</table>
-		<blockquote class="inline_help">
-			<p>Choose a disk size</p>
-		</blockquote>
-
-		<table>
-			<tr>
 				<td></td>
 				<td>
 					<input type="button" value="_(Download)_" busyvalue="_(Downloading)_..." readyvalue="_(Download)_" id="btnDownload" /><span id="download_status"></span>
@@ -687,7 +671,7 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 					?>
 					</select>
 					<?
-			$usbboothidden =  "hidden" ;
+			$usbboothidden = "hidden" ;
 				if ($arrConfig['domain']['ovmf'] != '0') $usbboothidden = "" ;
 				?>
 				<span id="USBBoottext" class="advanced" <?=$usbboothidden?>>_(Enable USB boot)_:</span>
@@ -783,23 +767,23 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 					</select>
 				</td>
 				</tr>
-				<tr  id="autoportline" name="autoportline" class="<?if ($arrGPU['id'] != 'virtual') echo 'was';?>advanced autoportline">
+				<tr id="autoportline" name="autoportline" class="<?if ($arrGPU['id'] != 'virtual') echo 'was';?>advanced autoportline">
 					<td>_(VM Console AutoPort)_:</td>
 				<td>
-					<select  id="autoport" name="gpu[<?=$i?>][autoport]" class="narrow" onchange="AutoportChange(this)">
+					<select id="autoport" name="gpu[<?=$i?>][autoport]" class="narrow" onchange="AutoportChange(this)">
 						<?
 						echo mk_option($arrGPU['autoport'], 'yes', _('Yes'));
 						echo mk_option($arrGPU['autoport'], 'no', _('No'));
 						?>
 					</select>
 
-				<span id="Porttext"  <?=$hiddenport?>>_(VM Console Port)_:</span>
+				<span id="Porttext" <?=$hiddenport?>>_(VM Console Port)_:</span>
 
-				<input type="number" size="5" maxlength="5"  id="port" class="narrow" style="width: 50px;" name="gpu[<?=$i?>][port]"  title="_(port for virtual console)_"  value="<?=$arrGPU['port']?>"  <?=$hiddenport?> >
+				<input type="number" size="5" maxlength="5" id="port" class="narrow" style="width: 50px;" name="gpu[<?=$i?>][port]" title="_(port for virtual console)_" value="<?=$arrGPU['port']?>" <?=$hiddenport?> >
 
 				<span id="WSPorttext" <?=$hiddenwsport?>>_(VM Console WS Port)_:</span>
 
-				<input type="number" size="5" maxlength="5" id="wsport" class="narrow" style="width: 50px;" name="gpu[<?=$i?>][wsport]"  title="_(wsport for virtual console)_"  value="<?=$arrGPU['wsport']?>" <?=$hiddenwsport?> >
+				<input type="number" size="5" maxlength="5" id="wsport" class="narrow" style="width: 50px;" name="gpu[<?=$i?>][wsport]" title="_(wsport for virtual console)_" value="<?=$arrGPU['wsport']?>" <?=$hiddenwsport?> >
 			</td>
 			</tr>
 			<?}?>
@@ -914,7 +898,7 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 		</script>
 
 		<?if ( $arrConfig['nic'] == false) {
-	  		$arrConfig['nic']['0'] =
+			$arrConfig['nic']['0'] =
 			[
 				'network' => $domain_bridge,
 				'mac' => "",
@@ -963,7 +947,7 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 				<tr class="advanced">
 					<td>_(Boot Order)_:</td>
 					<td>
-					<input type="number" size="5" maxlength="5" id="nic[<?=$i?>][boot]" class="narrow bootorder" <?=$bootdisable?>  style="width: 50px;" name="nic[<?=$i?>][boot]"   title="_(Boot order)_"  value="<?=$arrNic['boot']?>" >
+					<input type="number" size="5" maxlength="5" id="nic[<?=$i?>][boot]" class="narrow bootorder" <?=$bootdisable?> style="width: 50px;" name="nic[<?=$i?>][boot]" title="_(Boot order)_" value="<?=$arrNic['boot']?>" >
 					</td>
 				</tr>
 			</table>
@@ -1031,7 +1015,7 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 				<tr class="advanced">
 					<td>_(Boot Order)_:</td>
 					<td>
-					<input type="number" size="5" maxlength="5" id="nic[{{INDEX}}][boot]" class="narrow bootorder" <?=$bootdisable?>  style="width: 50px;" name="nic[{{INDEX}}][boot]"   title="_(Boot order)_"  value="" >
+					<input type="number" size="5" maxlength="5" id="nic[{{INDEX}}][boot]" class="narrow bootorder" <?=$bootdisable?> style="width: 50px;" name="nic[{{INDEX}}][boot]" title="_(Boot order)_" value="" >
 					</td>
 				</tr>
 			</table>
@@ -1051,8 +1035,8 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 							?>
 							<label for="usb<?=$i?>">&nbsp&nbsp&nbsp&nbsp<input type="checkbox" name="usb[]" id="usb<?=$i?>" value="<?=htmlspecialchars($arrDev['id'])?>" <?if (count(array_filter($arrConfig['usb'], function($arr) use ($arrDev) { return ($arr['id'] == $arrDev['id']); }))) echo 'checked="checked"';?>
 							/> &nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp <input type="checkbox" name="usbopt[<?=htmlspecialchars($arrDev['id'])?>]]" id="usbopt<?=$i?>" value="<?=htmlspecialchars($arrDev['id'])?>" <?if ($arrDev["startupPolicy"] =="optional") echo 'checked="checked"';?>/>&nbsp&nbsp&nbsp&nbsp&nbsp
-							<input type="number" size="5" maxlength="5" id="usbboot<?=$i?>" class="narrow bootorder" <?=$bootdisable?>  style="width: 50px;" name="usbboot[<?=htmlspecialchars($arrDev['id'])?>]]"   title="_(Boot order)_"  value="<?=$arrDev['usbboot']?>" >
-						    <?=htmlspecialchars($arrDev['name'])?> (<?=htmlspecialchars($arrDev['id'])?>)</label><br/>
+							<input type="number" size="5" maxlength="5" id="usbboot<?=$i?>" class="narrow bootorder" <?=$bootdisable?> style="width: 50px;" name="usbboot[<?=htmlspecialchars($arrDev['id'])?>]]" title="_(Boot order)_" value="<?=$arrDev['usbboot']?>" >
+							<?=htmlspecialchars($arrDev['name'])?> (<?=htmlspecialchars($arrDev['id'])?>)</label><br/>
 							<?
 							}
 						} else {
@@ -1086,7 +1070,7 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 							if ($arrDev["typeid"] != "0108") $bootdisable = ' disabled="disabled"' ;
 							if (count($pcidevice=array_filter($arrConfig['pci'], function($arr) use ($arrDev) { return ($arr['id'] == $arrDev['id']); }))) {
 								$extra .= ' checked="checked"';
-								foreach ($pcidevice as $pcikey => $pcidev)  $pciboot = $pcidev["boot"];  ;
+								foreach ($pcidevice as $pcikey => $pcidev) $pciboot = $pcidev["boot"]; ;
 
 								} elseif (!in_array($arrDev['driver'], ['pci-stub', 'vfio-pci'])) {
 									//$extra .= ' disabled="disabled"';
@@ -1095,7 +1079,7 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 								$intAvailableOtherPCIDevices++;
 						?>
 						<label for="pci<?=$i?>">&nbsp&nbsp&nbsp&nbsp<input type="checkbox" name="pci[]" id="pci<?=$i?>" value="<?=htmlspecialchars($arrDev['id'])?>" <?=$extra?>/> &nbsp
-						<input type="number" size="5" maxlength="5" id="pciboot<?=$i?>" class="narrow pcibootorder" <?=$bootdisable?>  style="width: 50px;" name="pciboot[<?=htmlspecialchars($arrDev['id'])?>]"   title="_(Boot order)_"  value="<?=$pciboot?>" >
+						<input type="number" size="5" maxlength="5" id="pciboot<?=$i?>" class="narrow pcibootorder" <?=$bootdisable?> style="width: 50px;" name="pciboot[<?=htmlspecialchars($arrDev['id'])?>]" title="_(Boot order)_" value="<?=$pciboot?>" >
 						<?=htmlspecialchars($arrDev['name'])?> | <?=htmlspecialchars($arrDev['type'])?> (<?=htmlspecialchars($arrDev['id'])?>)</label><br/>
 					<?
 						}
@@ -1517,7 +1501,7 @@ $(function() {
 				if (data.status == 'Done') {
 					$("#vmform #template_unraid").find('option:selected').attr({
 						localpath: data.localpath,
-						localfolder:  data.localfolder,
+						localfolder: data.localfolder,
 						valid: '1'
 					});
 					$("#vmform #template_unraid").change();
