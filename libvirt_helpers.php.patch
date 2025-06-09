@@ -1,42 +1,42 @@
---- /usr/local/emhttp/plugins/dynamix.vm.manager/include/libvirt_helpers.php.original	2025-03-02 16:19:57.324441772 -0700
-+++ /usr/local/emhttp/plugins/dynamix.vm.manager/include/libvirt_helpers.php	2025-03-02 18:19:46.378013584 -0700
-@@ -348,6 +348,11 @@
- 			'form' => 'OpenELEC.form.php',
- 			'icon' => 'openelec.png'
- 		],
-+		
-+		'UnRAID' => [
-+			'form' => 'UnRAID.form.php',
-+			'icon' => 'unraid.png'
-+		],		
+--- /dev/null
++++ libvirt_helpers.php
+@@ -362,6 +362,11 @@
+ 		'icon' => 'openelec.png'
+ 	],
  
- 		' Linux ' => '', /* Linux Header */
- 
-@@ -480,6 +485,27 @@
- 			'valid' => '0'
- 		]
- 	];
-+	
-+	$arrUnRAIDVersions = json_decode(file_get_contents('https://releases.unraid.net/usb-creator'), true);
-+	$arrUnRAIDVersions = array_merge(...array_map(
-+		fn($os) => $os['subitems'] ?? [$os],
-+		$arrUnRAIDVersions['os_list']
-+	));
++	'UnRAID' => [
++		'form' => 'UnRAID.form.php',
++		'icon' => 'unraid.png'
++	],
 +
-+	$arrUnRAIDVersions = array_column(
-+		array_map(
-+			fn($item) => [
-+				'name' => substr($item['name'], 7),
-+				'url' => $item['url'],
-+				'size' => $item['image_download_size'],
-+				'localpath' => '',
-+				'valid' => 0
-+			],
-+			array_filter($arrUnRAIDVersions, fn($item) => $item['name'] !== 'Unraid OS Releases (Next Branch)')
-+		),
-+		null,
-+		'name'
-+	);
+ 	' Linux ' => '', /* Linux Header */
  
- 	$fedora = '/var/tmp/fedora-virtio-isos';
- 	// set variable to obtained information
+ 	'Linux' => [
+@@ -493,6 +498,27 @@
+ 		'valid' => '0'
+ 	]
+ ];
++
++$arrUnRAIDVersions = json_decode(file_get_contents('https://releases.unraid.net/usb-creator'), true);
++$arrUnRAIDVersions = array_merge(...array_map(
++	fn($os) => $os['subitems'] ?? [$os],
++	$arrUnRAIDVersions['os_list']
++));
++
++$arrUnRAIDVersions = array_column(
++	array_map(
++		fn($item) => [
++			'name' => substr($item['name'], 7),
++			'url' => $item['url'],
++			'size' => $item['image_download_size'],
++			'localpath' => '',
++			'valid' => 0
++		],
++		array_filter($arrUnRAIDVersions, fn($item) => $item['name'] !== 'Unraid OS Releases (Next Branch)')
++	),
++	null,
++	'name'
++);
+ 
+ $fedora = '/var/tmp/fedora-virtio-isos';
+ // set variable to obtained information
