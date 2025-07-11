@@ -1,7 +1,6 @@
 --- /usr/local/emhttp/plugins/dynamix.vm.manager/include/libvirt_helpers.php.original
 +++ /usr/local/emhttp/plugins/dynamix.vm.manager/include/libvirt_helpers.php
-@@ -362,6 +362,11 @@
- 		'icon' => 'openelec.png'
+@@ -363,5 +363,10 @@
  	],
  
 +	'UnRAID' => [
