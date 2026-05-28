@@ -69,6 +69,7 @@
 		if (array_key_exists($strID, $arrUnRAIDVersions)) {
 			$arrUnRAIDVersions[$strID]['localpath'] = $strLocalpath;
 			// Only mark as valid if the file exists and there's no pending setup for this version
+			clearstatcache();
 			if (file_exists($strLocalpath) && ($arrUnRAIDConfig['pending_version'] ?? '') !== $strID) {
 				$arrUnRAIDVersions[$strID]['valid'] = '1';
 			}
@@ -107,6 +108,15 @@
 		}
 
 		echo json_encode($reply);
+		exit;
+	}
+
+	if (isset($_POST['reset_setup'])) {
+		@header('Content-Type: application/json');
+		unset($arrUnRAIDConfig['pending_version'], $arrUnRAIDConfig['pending_name'], $arrUnRAIDConfig['pending_download_path'], $arrUnRAIDConfig['pending_size']);
+		saveUnRAIDConfig($arrUnRAIDConfig);
+		@unlink($strStateFile);
+		echo json_encode(['status' => 'ok']);
 		exit;
 	}
 
@@ -155,9 +165,6 @@
 			$strExtractTmpDir = '/tmp/UNRAID_' . $_POST['download_version'];
 			$img_size_gb = $arrUnRAIDConfig['pending_size'] ?? 32;
 			
-			$strDownloadPgrep = '-f "wget.*' . $strZipFile . '.*' . $arrDownloadUnRAID['url'] . '"';
-			$strDdPgrep = '-f "dd if=/dev/zero of=' . $strImgTmpFile . '"';
-			$strExtractPgrep = '-f "unzip.*' . $strZipFile . '.*' . $strExtractTmpDir . '"';
 			
 			$strAllCmd = <<<EOD
 			#!/bin/bash
@@ -168,34 +175,42 @@
 			  echo "\$1" > "{$strStateFile}"
 			}
 
+			error_exit() {
+			  update_state "Error: \$1"
+			  exit 1
+			}
+
+			trap 'error_exit "Script interrupted"' INT TERM
+			trap 'RESULT=\$?; if [ \$RESULT -ne 0 ]; then error_exit "Command failed with code \$RESULT. Check log."; fi' EXIT
+
 			{
 			  if [ ! -f "{$strImgFile}" ]; then
 			    if [ ! -f "{$strZipFile}" ]; then
 			      update_state "Downloading"
-			      wget -nv -c -O "{$strZipFile}" "{$arrDownloadUnRAID['url']}"
+			      wget -nv -c -O "{$strZipFile}" "{$arrDownloadUnRAID['url']}" || error_exit "Download failed"
 			    fi
 
 			    if [ ! -d "{$strExtractTmpDir}" ]; then
 			      update_state "Extracting"
 			      mkdir -p "{$strExtractTmpDir}"
-			      unzip -o "{$strZipFile}" -d "{$strExtractTmpDir}"
+			      unzip -o "{$strZipFile}" -d "{$strExtractTmpDir}" || error_exit "Extraction failed"
 			    fi
 
 			    if [ ! -f "{$strImgTmpFile}" ]; then
 			      update_state "Creating image"
-			      dd if=/dev/zero of="{$strImgTmpFile}" bs=1M count=$(({$img_size_gb} * 1024))
-			      parted "{$strImgTmpFile}" --script mklabel msdos && parted "{$strImgTmpFile}" --script mkpart primary fat32 1MiB 100%
+			      dd if=/dev/zero of="{$strImgTmpFile}" bs=1M count=$(({$img_size_gb} * 1024)) || error_exit "Image creation failed"
+			      parted "{$strImgTmpFile}" --script mklabel msdos && parted "{$strImgTmpFile}" --script mkpart primary fat32 1MiB 100% || error_exit "Partitioning failed"
 
 			      LOOP_DEVICE=\$(losetup --find --show --partscan "{$strImgTmpFile}")
 			      PARTITION="\${LOOP_DEVICE}p1"
 
 			      update_state "Formatting"
-			      mkfs.vfat -F 32 -n UNRAIDVM "\$PARTITION"
-			      "{$strExtractTmpDir}/syslinux/syslinux_linux" -f --install "\$PARTITION" 1>/dev/null 2>/dev/null
+			      mkfs.vfat -F 32 -n UNRAIDVM "\$PARTITION" || error_exit "Formatting failed"
+			      "{$strExtractTmpDir}/syslinux/syslinux_linux" -f --install "\$PARTITION" 1>/dev/null 2>/dev/null || error_exit "Syslinux installation failed"
 			      sed -i 's/\bappend\b/append unraidlabel=UNRAIDVM/g' "{$strExtractTmpDir}/syslinux/syslinux.cfg"
 
 			      update_state "Copying files"
-			      mcopy -i "\$PARTITION" -s "{$strExtractTmpDir}/"* ::/
+			      mcopy -i "\$PARTITION" -s "{$strExtractTmpDir}/"* ::/ || error_exit "File copy failed"
 			      losetup -d "\$LOOP_DEVICE"
 			      mv "{$strImgTmpFile}" "{$strImgFile}"
 			    fi
@@ -206,6 +221,7 @@
 			  rm -f "{$strZipFile}"
 			  rm -rf "{$strExtractTmpDir}"
 			  update_state "Done"
+			  trap - EXIT
 			} >> "{$strLogFile}" 2>&1
 			rm -f "{$strLogFile}"
 			rm -f "{$strInstallScript}"
@@ -225,6 +241,10 @@
 				$isScriptRunning = pgrep($strInstallScriptPgrep, false);
 			}
 
+			if ($currentState !== 'Done' && $currentState !== '' && strpos($currentState, 'Error') === false && !$isScriptRunning) {
+				$currentState = 'Error: Process stopped unexpectedly';
+			}
+
 			switch ($currentState) {
 				case 'Done':
 					$reply['status'] = 'Done';
@@ -241,6 +261,7 @@
 				case 'Downloading':
 					clearstatcache();
 					$intSize = file_exists($strZipFile) ? filesize($strZipFile) : 0;
+					if ($intSize > $arrDownloadUnRAID['size']) $intSize = $arrDownloadUnRAID['size'];
 					$strPercent = $intSize > 0 ? round(($intSize / $arrDownloadUnRAID['size']) * 100) : 0;
 					$reply['status'] = _('Downloading') . ' ... ' . $strPercent . '%';
 					break;
@@ -262,7 +283,15 @@
 					break;
 
 				default:
-					$reply['status'] = _('Starting') . ' ... ';
+					if (strpos($currentState, 'Error') !== false) {
+						$reply['error'] = _($currentState);
+						// Allow reset on error
+						unset($arrUnRAIDConfig['pending_version'], $arrUnRAIDConfig['pending_name'], $arrUnRAIDConfig['pending_download_path'], $arrUnRAIDConfig['pending_size']);
+						saveUnRAIDConfig($arrUnRAIDConfig);
+						@unlink($strStateFile);
+					} else {
+						$reply['status'] = _('Starting') . ' ... ';
+					}
 					break;
 			}
 
@@ -339,12 +368,7 @@
 			]
 		],
 		'usb' => [],
-		'shares' => [
-			[
-				'source' => (is_dir('/mnt/user/appdata') ? '/mnt/user/appdata/UnRAID/' : ''),
-				'target' => 'appconfig'
-			]
-		]
+		'shares' => []
 	];
 
 $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaration
@@ -367,9 +391,6 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 			}
 		} else {
 			// form view
-			if (isset($_POST['shares'][0]['source']) && !empty($_POST['shares'][0]['source'])) {
-				@mkdir($_POST['shares'][0]['source'], 0777, true);
-			}
 			$_POST['clock'] = $arrDefaultClocks["other"] ;
 			if ($lv->domain_new($_POST)){
 				$reply = ['success' => true];
@@ -451,9 +472,6 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 			$xml = $_POST['xmldesc'];
 		} else {
 			// form view
-			if (isset($_POST['shares'][0]['source']) && !empty($_POST['shares'][0]['source'])) {
-				@mkdir($_POST['shares'][0]['source'], 0777, true);
-			}
 			$_POST['clock'] = $arrDefaultClocks["other"] ;
 			$arrExistingConfig = custom::createArray('domain',$strXML);
 			$arrUpdatedConfig = custom::createArray('domain',$lv->config_to_xml($_POST));
@@ -546,20 +564,6 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 		</blockquote>
 	</div>
 
-	<div class="installed">
-		<table>
-			<tr class="advanced">
-				<td>_(Description)_:</td>
-				<td><input type="text" name="domain[desc]" title="_(description of virtual machine)_" placeholder="_(description of virtual machine)_ (_(optional)_)" value="<?=htmlspecialchars($arrConfig['domain']['desc'])?>" /></td>
-			</tr>
-		</table>
-		<div class="advanced">
-			<blockquote class="inline_help">
-				<p>Give the VM a brief description (optional field).</p>
-			</blockquote>
-		</div>
-	</div>
-
 	<table>
 		<tr>
 			<td>_(UnRAID Version)_:</td>
@@ -595,10 +599,6 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 		<blockquote class="inline_help">
 			<p>Choose a folder where the UnRAID image will downloaded to</p>
 		</blockquote>
-	</div>
-
-
-	<div class="available">
 
 		<table>
 			<tr>
@@ -629,21 +629,18 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 	</div>
 
 	<div class="installed">
-
-		<div class="config_folder_section">
-			<table>
-				<tr>
-					<td>_(Config Folder)_:</td>
-					<td>
-						<input type="text" data-pickfolders="true" data-pickfilter="NO_FILES_FILTER" data-pickroot="/mnt/" value="<?=htmlspecialchars($arrConfig['shares'][0]['source'])?>" name="shares[0][source]" id="config_path" placeholder="_(e.g.)_ /mnt/user/appdata/unraid" title="_(path on Unraid share to save UnRAID settings)_" required/>
-						<input type="hidden" value="<?=htmlspecialchars($arrConfig['shares'][0]['target'])?>" name="shares[0][target]" />
-					</td>
-				</tr>
-			</table>
+		<table>
+			<tr class="advanced">
+				<td>_(Description)_:</td>
+				<td><input type="text" name="domain[desc]" title="_(description of virtual machine)_" placeholder="_(description of virtual machine)_ (_(optional)_)" value="<?=htmlspecialchars($arrConfig['domain']['desc'])?>" /></td>
+			</tr>
+		</table>
+		<div class="advanced">
 			<blockquote class="inline_help">
-				<p>Choose a folder or type in a new name off of an existing folder to specify where UnRAID will save configuration files.  If you create multiple UnRAID VMs, these Config Folders must be unique for each instance.</p>
+				<p>Give the VM a brief description (optional field).</p>
 			</blockquote>
 		</div>
+
 
 		<table>
 			<tr class="advanced">
@@ -1587,26 +1584,40 @@ $(function() {
 
 		$.post("/plugins/dynamix.vm.manager/templates/UnRAID.form.php", postdata, function( data ) {
 			if (data.error) {
-				$("#vmform #download_status").html($("#vmform #download_status").html() + '<br><span style="color: red">' + data.error + '</span>');
+				$("#vmform #download_status").html('<span style="color: red">' + data.error + '</span><br><input type="button" value="_(Retry)_" onclick="checkOrInitDownload(false)"> <input type="button" value="_(Reset)_" id="btnResetSetup">');
+				$("#vmform #btnResetSetup").click(function() {
+					$.post("/plugins/dynamix.vm.manager/templates/UnRAID.form.php", {reset_setup: 1}, function() {
+						location.reload();
+					});
+				});
 			} else if (data.status) {
 				if (data.status === 'Done') {
 					$("#vmform #download_status").html('Done');
 				} else {
 					var status_parts = data.status.split(' ... ');
 					var status_text = status_parts[0];
-					var old_content = $("#vmform #download_status").html();
+					var current_html = $("#vmform #download_status").html();
 
-					if (old_content.indexOf(status_text) !== -1) {
-						var lines = old_content.split('<br>');
+					// Clear status if we are just starting
+					if (status_text === 'Starting') {
+						$("#vmform #download_status").html(data.status);
+					} else if (current_html.indexOf(status_text) !== -1) {
+						var lines = current_html.split('<br>');
+						var found = false;
 						for (var i = 0; i < lines.length; i++) {
 							if (lines[i].indexOf(status_text) !== -1) {
 								lines[i] = data.status;
+								found = true;
 								break;
 							}
 						}
-						$("#vmform #download_status").html(lines.join('<br>'));
+						if (found) {
+							$("#vmform #download_status").html(lines.join('<br>'));
+						} else {
+							$("#vmform #download_status").append('<br>' + data.status);
+						}
 					} else {
-						$("#vmform #download_status").append((old_content ? '<br>' : '') + data.status);
+						$("#vmform #download_status").append((current_html ? '<br>' : '') + data.status);
 					}
 				}
 
@@ -1651,13 +1662,12 @@ $(function() {
 		if ($selected.attr('valid') === '0' && <?=$boolNew ? 'true' : 'false'?>) {
 			$("#vmform .available").slideDown('fast');
 			$("#vmform .installed").slideUp('fast');
-			$("#vmform #download_status").html('');
 			if (pending_version === $selected.val()) {
 				checkOrInitDownload(true);
 			} else {
+				$("#vmform #download_status").html('');
 				$("#vmform #download_path").val($selected.attr('localfolder'));
 				$("#vmform .name_section input").prop('disabled', false);
-				$("#vmform .config_folder_section input").prop('disabled', false);
 				$("#vmform .available input, #vmform .available select").prop('disabled', false);
 			}
 		} else {
