@@ -64,6 +64,9 @@
 		}
 	}
 
+	// Sort versions by version number descending
+	uksort($arrUnRAIDVersions, fn($a, $b) => version_compare($b, $a));
+
 	// Compare unraid.cfg and populate 'localpath' in $arrOEVersion
 	foreach ($arrUnRAIDConfig as $strID => $strLocalpath) {
 		if (array_key_exists($strID, $arrUnRAIDVersions)) {
@@ -150,7 +153,7 @@
 				@mkdir($_POST['download_path'], 0777, true);
 				$_POST['download_path'] = realpath($_POST['download_path']) . '/';
 
-				$img_size_gb = intval($_POST['download_size'] ?? 32);
+				$img_size_gb = intval($_POST['download_size'] ?? 2);
 				$img_size_bytes = $img_size_gb * 1024 * 1024 * 1024;
 
 				// Check free space (Zip + Img + safety)
@@ -177,7 +180,7 @@
 			$strImgFile = $strDownloadPath . basename($strCleanUrl, 'zip') . 'img';
 			$strImgTmpFile = $strImgFile . '.tmp';
 			$strExtractTmpDir = '/tmp/UNRAID_' . $_POST['download_version'];
-			$img_size_gb = $arrUnRAIDConfig['pending_size'] ?? 32;
+			$img_size_gb = $arrUnRAIDConfig['pending_size'] ?? 2;
 			
 			
 			$strAllCmd = <<<EOD
@@ -201,6 +204,8 @@
 			  if [ ! -f "{$strImgFile}" ]; then
 			    update_state "Downloading"
 			    wget -nv -c -O "{$strZipFile}" "{$arrDownloadUnRAID['url']}" || error_exit "Download failed"
+			    update_state "Downloading ... 100%"
+			    sleep 1
 
 			    update_state "Extracting"
 			    mkdir -p "{$strExtractTmpDir}"
@@ -274,20 +279,24 @@
 					$reply['status'] = _('Downloading') . ' ... ' . $strPercent . '%';
 					break;
 
+				case 'Downloading ... 100%':
+					$reply['status'] = _('Downloading') . ' ... 100%';
+					break;
+
 				case 'Extracting':
-					$reply['status'] = _('Extracting') . ' ... ';
+					$reply['status'] = _('Downloading') . ' ... 100%<br>' . _('Extracting') . ' ... ';
 					break;
 
 				case 'Creating image':
-					$reply['status'] = _('Creating image') . ' ... ';
+					$reply['status'] = _('Downloading') . ' ... 100%<br>' . _('Extracting') . ' ... 100%<br>' . _('Creating image') . ' ... ';
 					break;
 
 				case 'Formatting':
-					$reply['status'] = _('Formatting') . ' ... ';
+					$reply['status'] = _('Downloading') . ' ... 100%<br>' . _('Extracting') . ' ... 100%<br>' . _('Creating image') . ' ... 100%<br>' . _('Formatting') . ' ... ';
 					break;
 
 				case 'Copying files':
-					$reply['status'] = _('Copying files') . ' ... ';
+					$reply['status'] = _('Downloading') . ' ... 100%<br>' . _('Extracting') . ' ... 100%<br>' . _('Creating image') . ' ... 100%<br>' . _('Formatting') . ' ... 100%<br>' . _('Copying files') . ' ... ';
 					break;
 
 				default:
@@ -615,7 +624,7 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 					<select id="download_size">
 					<?
 						for ($i = 1; $i <= 32; $i *= 2) {
-							echo mk_option($arrUnRAIDConfig['pending_size'] ?? 32, $i, $i . ' GB');
+							echo mk_option($arrUnRAIDConfig['pending_size'] ?? 2, $i, $i . ' GB');
 						}
 					?>
 					</select>
@@ -1605,31 +1614,7 @@ $(function() {
 				if (data.status === 'Done') {
 					$("#vmform #download_status").html('Done');
 				} else {
-					var status_parts = data.status.split(' ... ');
-					var status_text = status_parts[0];
-					var current_html = $("#vmform #download_status").html();
-
-					// Clear status if we are just starting
-					if (status_text === 'Starting') {
-						$("#vmform #download_status").html(data.status);
-					} else if (current_html.indexOf(status_text) !== -1) {
-						var lines = current_html.split('<br>');
-						var found = false;
-						for (var i = 0; i < lines.length; i++) {
-							if (lines[i].indexOf(status_text) !== -1) {
-								lines[i] = data.status;
-								found = true;
-								break;
-							}
-						}
-						if (found) {
-							$("#vmform #download_status").html(lines.join('<br>'));
-						} else {
-							$("#vmform #download_status").append('<br>' + data.status);
-						}
-					} else {
-						$("#vmform #download_status").append((current_html ? '<br>' : '') + data.status);
-					}
+					$("#vmform #download_status").html(data.status);
 				}
 
 				if (data.pid) {
