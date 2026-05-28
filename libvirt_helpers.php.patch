@@ -1,18 +1,15 @@
 --- /usr/local/emhttp/plugins/dynamix.vm.manager/include/libvirt_helpers.php.original
 +++ /usr/local/emhttp/plugins/dynamix.vm.manager/include/libvirt_helpers.php
-@@ -363,5 +363,10 @@
- 	],
- 
+@@
+ 			'icon' => 'ubuntu.png',
+ 			'os' => 'ubuntu'
+ 		],
++
 +	'UnRAID' => [
 +		'form' => 'UnRAID.form.php',
 +		'icon' => 'unraid.png'
 +	],
-+
- 	' Linux ' => '', /* Linux Header */
- 
- 	'Linux' => [
-@@ -494,5 +499,26 @@
- 	]
+@@
  ];
 +
 +$arrUnRAIDVersions = [];
@@ -41,6 +38,3 @@
 +        uksort($arrUnRAIDVersions, fn($a, $b) => version_compare($b, $a));
 +    }
 +}
- 
- $fedora = '/var/tmp/fedora-virtio-isos';
- // set variable to obtained information
