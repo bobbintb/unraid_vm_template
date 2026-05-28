@@ -36,6 +36,7 @@
 
 	// Read localpaths in from unraid.cfg
 	$strUnRAIDConfig = "/boot/config/plugins/dynamix.vm.manager/unraid.cfg";
+	$strStateFile = "/tmp/unraid_setup.state";
 	$arrUnRAIDConfig = [];
 
 	if (file_exists($strUnRAIDConfig)) {
@@ -44,11 +45,35 @@
 		@mkdir(dirname($strUnRAIDConfig), 0777, true);
 	}
 
+	if (!function_exists('saveUnRAIDConfig')) {
+		function saveUnRAIDConfig($config) {
+			$strUnRAIDConfig = "/boot/config/plugins/dynamix.vm.manager/unraid.cfg";
+			$text = '';
+			foreach ($config as $key => $value) if ($value !== '') $text .= "$key=\"$value\"\n";
+			file_put_contents($strUnRAIDConfig, $text);
+		}
+	}
+
+	if (!function_exists('getSetupState')) {
+		function getSetupState() {
+			$strStateFile = "/tmp/unraid_setup.state";
+			if (file_exists($strStateFile)) {
+				return trim(file_get_contents($strStateFile));
+			}
+			return '';
+		}
+	}
+
+	// Sort versions by version number descending
+	uksort($arrUnRAIDVersions, fn($a, $b) => version_compare($b, $a));
+
 	// Compare unraid.cfg and populate 'localpath' in $arrOEVersion
 	foreach ($arrUnRAIDConfig as $strID => $strLocalpath) {
 		if (array_key_exists($strID, $arrUnRAIDVersions)) {
 			$arrUnRAIDVersions[$strID]['localpath'] = $strLocalpath;
-			if (file_exists($strLocalpath)) {
+			// Only mark as valid if the file exists and there's no pending setup for this version
+			clearstatcache();
+			if (file_exists($strLocalpath) && ($arrUnRAIDConfig['pending_version'] ?? '') !== $strID) {
 				$arrUnRAIDVersions[$strID]['valid'] = '1';
 			}
 		}
@@ -64,13 +89,24 @@
 			$reply = ['error' => 'Unknown version: ' . $_POST['delete_version']];
 		} else {
 			// delete img file
-			@unlink($arrDeleteUnRAID['localpath']);
+			if (!empty($arrDeleteUnRAID['localpath'])) {
+				@unlink($arrDeleteUnRAID['localpath']);
+				@unlink($arrDeleteUnRAID['localpath'] . '.tmp');
+				@unlink($arrDeleteUnRAID['localpath'] . '.log');
+			}
+
+			// Kill any running install script for this version
+			exec('pkill -f "UnRAID_' . $_POST['delete_version'] . '_install.sh"');
+			exec('pkill -f "wget.*' . $_POST['delete_version'] . '"');
 
 			// Save to strUnRAIDConfig
 			unset($arrUnRAIDConfig[$_POST['delete_version']]);
-			$text = '';
-			foreach ($arrUnRAIDConfig as $key => $value) $text .= "$key=\"$value\"\n";
-			file_put_contents($strUnRAIDConfig, $text);
+			if (($arrUnRAIDConfig['pending_version'] ?? '') === $_POST['delete_version']) {
+				unset($arrUnRAIDConfig['pending_version'], $arrUnRAIDConfig['pending_name'], $arrUnRAIDConfig['pending_download_path'], $arrUnRAIDConfig['pending_size']);
+				@unlink($strStateFile);
+				@unlink('/tmp/UnRAID_' . $_POST['delete_version'] . '_install.sh');
+			}
+			saveUnRAIDConfig($arrUnRAIDConfig);
 			$reply = ['status' => 'ok'];
 		}
 
@@ -78,7 +114,30 @@
 		exit;
 	}
 
+	if (isset($_POST['reset_setup'])) {
+		@header('Content-Type: application/json');
+		$pending_version = $arrUnRAIDConfig['pending_version'] ?? '';
+		if ($pending_version && array_key_exists($pending_version, $arrUnRAIDVersions)) {
+			$arrDownloadUnRAID = $arrUnRAIDVersions[$pending_version];
+			$strDownloadPath = $arrUnRAIDConfig['pending_download_path'] ?? '';
+			if ($strDownloadPath) {
+				$strCleanUrl = explode('?', $arrDownloadUnRAID['url'])[0];
+				@unlink($strDownloadPath . basename($strCleanUrl));
+				@unlink($strDownloadPath . basename($strCleanUrl, 'zip') . 'img.tmp');
+				@unlink($strDownloadPath . basename($strCleanUrl) . '.log');
+			}
+			exec('pkill -f "UnRAID_' . $pending_version . '_install.sh"');
+			@exec("rm -rf " . escapeshellarg('/tmp/UNRAID_' . $pending_version));
+		}
+		unset($arrUnRAIDConfig['pending_version'], $arrUnRAIDConfig['pending_name'], $arrUnRAIDConfig['pending_download_path'], $arrUnRAIDConfig['pending_size']);
+		saveUnRAIDConfig($arrUnRAIDConfig);
+		@unlink($strStateFile);
+		echo json_encode(['status' => 'ok']);
+		exit;
+	}
+
 	if (isset($_POST['download_path'])) {
+		@header('Content-Type: application/json');
 		$arrDownloadUnRAID = [];
 		if (array_key_exists($_POST['download_version'], $arrUnRAIDVersions)) {
 			$arrDownloadUnRAID = $arrUnRAIDVersions[$_POST['download_version']];
@@ -88,109 +147,172 @@
 		} elseif (empty($_POST['download_path'])) {
 			$reply = ['error' => _('Please choose a folder the UnRAID image will download to')];
 		} else {
-			@mkdir($_POST['download_path'], 0777, true);
-			$_POST['download_path'] = realpath($_POST['download_path']) . '/';
+			$boolCheckOnly = !empty($_POST['checkonly']);
 
-			// Check free space
-			if (disk_free_space($_POST['download_path']) < $arrDownloadUnRAID['size']+10000) {
-				$reply = ['error' => _('Not enough free space, need at least').' ' . ceil($arrDownloadUnRAID['size']/1000000).'MB'];
-				echo json_encode($reply);
-				exit;
+			if (!$boolCheckOnly) {
+				@mkdir($_POST['download_path'], 0777, true);
+				$_POST['download_path'] = realpath($_POST['download_path']) . '/';
+
+				$img_size_gb = intval($_POST['download_size'] ?? 2);
+				$img_size_bytes = $img_size_gb * 1024 * 1024 * 1024;
+
+				// Check free space (Zip + Img + safety)
+				if (disk_free_space($_POST['download_path']) < ($arrDownloadUnRAID['size'] + $img_size_bytes + 100*1024*1024)) {
+					$reply = ['error' => _('Not enough free space')];
+					echo json_encode($reply);
+					exit;
+				}
+
+				// Save pending state to unraid.cfg
+				$arrUnRAIDConfig['pending_version'] = $_POST['download_version'];
+				$arrUnRAIDConfig['pending_name'] = $_POST['vm_name'];
+				$arrUnRAIDConfig['pending_download_path'] = $_POST['download_path'];
+				$arrUnRAIDConfig['pending_size'] = $img_size_gb;
+				saveUnRAIDConfig($arrUnRAIDConfig);
 			}
 
-			$boolCheckOnly = !empty($_POST['checkonly']);
 			$strInstallScript = '/tmp/UnRAID_' . $_POST['download_version'] . '_install.sh';
 			$strInstallScriptPgrep = '-f "UnRAID_' . $_POST['download_version'] . '_install.sh"';
-			$strZipFile = $_POST['download_path'] . basename($arrDownloadUnRAID['url']);
+			$strDownloadPath = $arrUnRAIDConfig['pending_download_path'] ?? $_POST['download_path'];
+			$strCleanUrl = explode('?', $arrDownloadUnRAID['url'])[0];
+			$strZipFile = $strDownloadPath . basename($strCleanUrl);
 			$strLogFile = $strZipFile . '.log';
-			$strImgFile = $_POST['download_path'] . basename($arrDownloadUnRAID['url'], 'zip') . 'img';
-			$strExtractTmpDir = '/tmp/UNRAID_x';
-			// $modifySyslinuxCfg = "sed -i 's/\\bappend\\b/append unraidlabel=UNRAIDVM/g'" . $strExtractTmpDir . '/syslinux/syslinux.cfg';
+			$strImgFile = $strDownloadPath . basename($strCleanUrl, 'zip') . 'img';
+			$strImgTmpFile = $strImgFile . '.tmp';
+			$strExtractTmpDir = '/tmp/UNRAID_' . $_POST['download_version'];
+			$img_size_gb = $arrUnRAIDConfig['pending_size'] ?? 2;
 			
-			// Save to strUnRAIDConfig
-			$arrUnRAIDConfig[$_POST['download_version']] = $strImgFile;
-			$text = '';
-			foreach ($arrUnRAIDConfig as $key => $value) $text .= "$key=\"$value\"\n";
-			file_put_contents($strUnRAIDConfig, $text);
-			$strDownloadPgrep = '-f "wget.*' . $strZipFile . '.*' . $arrDownloadUnRAID['url'] . '"';
-			$strDdPgrep = '-f "dd if=/dev/zero of=' . $strImgFile . ' bs=1M count=32768"';
-			$strExtractPgrep = '-f "unzip.*' . $strZipFile . '.*' . $strExtractTmpDir . '"';
 			
 			$strAllCmd = <<<EOD
 			#!/bin/bash
 
+			set -e
+
+			update_state() {
+			  echo "\$1" > "{$strStateFile}"
+			}
+
+			error_exit() {
+			  update_state "Error: \$1"
+			  exit 1
+			}
+
+			trap 'error_exit "Script interrupted"' INT TERM
+			trap 'RESULT=\$?; if [ \$RESULT -ne 0 ]; then error_exit "Command failed with code \$RESULT. Check log."; fi' EXIT
+
 			{
-			  wget -nv -c -O {$strZipFile} {$arrDownloadUnRAID['url']}
-			  unzip -o {$strZipFile} -d {$strExtractTmpDir}
-			  dd if=/dev/zero of={$strImgFile} bs=1M count=32768
-			  parted {$strImgFile} --script mklabel msdos && parted {$strImgFile} --script mkpart primary fat32 1MiB 100%
-			  LOOP_DEVICE=\$(losetup --find --show --partscan {$strImgFile})
-			  PARTITION="\${LOOP_DEVICE}p1"
-			  mkfs.vfat -F 32 -n UNRAIDVM \$PARTITION
-			  {$strExtractTmpDir}/syslinux/syslinux_linux -f --install \$PARTITION 1>/dev/null 2>/dev/null
-			  sed -i 's/\bappend\b/append unraidlabel=UNRAIDVM/g' ${strExtractTmpDir}/syslinux/syslinux.cfg
-			  mcopy -i "\$PARTITION" -s {$strExtractTmpDir}/* ::/
-			  losetup -d "\$LOOP_DEVICE"
-			  chmod 777 {$_POST['download_path']} {$strImgFile}
-			  chown nobody:users {$_POST['download_path']} {$strImgFile}
-			  rm {$strZipFile}
-			  rm -dr {$strExtractTmpDir}
-			} >> {$strLogFile} 2>&1
-			rm {$strLogFile}
-			rm /tmp/UnRAID_{$_POST['download_version']}_install.sh
+			  if [ ! -f "{$strImgFile}" ]; then
+			    update_state "Downloading"
+			    wget -nv -c -O "{$strZipFile}" "{$arrDownloadUnRAID['url']}" || error_exit "Download failed"
+			    update_state "Downloading ... 100%"
+			    sleep 1
+
+			    update_state "Extracting"
+			    mkdir -p "{$strExtractTmpDir}"
+			    unzip -o "{$strZipFile}" -d "{$strExtractTmpDir}" || error_exit "Extraction failed"
+
+			    update_state "Creating image"
+			    dd if=/dev/zero of="{$strImgTmpFile}" bs=1M count=$(({$img_size_gb} * 1024)) conv=fsync || error_exit "Image creation failed"
+			    parted "{$strImgTmpFile}" --script mklabel msdos && parted "{$strImgTmpFile}" --script mkpart primary fat32 1MiB 100% || error_exit "Partitioning failed"
+
+			    LOOP_DEVICE=\$(losetup --find --show --partscan "{$strImgTmpFile}")
+			    PARTITION="\${LOOP_DEVICE}p1"
+
+			    update_state "Formatting"
+			    mkfs.vfat -F 32 -n UNRAIDVM "\$PARTITION" || error_exit "Formatting failed"
+			    "{$strExtractTmpDir}/syslinux/syslinux_linux" -f --install "\$PARTITION" 1>/dev/null 2>/dev/null || error_exit "Syslinux installation failed"
+			    sed -i 's/\bappend\b/append unraidlabel=UNRAIDVM/g' "{$strExtractTmpDir}/syslinux/syslinux.cfg"
+
+			    update_state "Copying files"
+			    mcopy -i "\$PARTITION" -s "{$strExtractTmpDir}/"* ::/ || error_exit "File copy failed"
+			    losetup -d "\$LOOP_DEVICE"
+			    mv "{$strImgTmpFile}" "{$strImgFile}"
+			  fi
+
+			  chmod 777 "{$strDownloadPath}" "{$strImgFile}"
+			  chown nobody:users "{$strDownloadPath}" "{$strImgFile}"
+			  rm -f "{$strZipFile}"
+			  rm -rf "{$strExtractTmpDir}"
+			  update_state "Done"
+			  trap - EXIT
+			} >> "{$strLogFile}" 2>&1
+			rm -f "{$strLogFile}"
+			rm -f "{$strInstallScript}"
 			EOD;
 
 
 			$reply = [];
-			switch (true) {
-				case file_exists($strImgFile):
-					switch (true) {
-						case !file_exists($strZipFile):
-							$reply['status'] = 'Done';
-							$reply['localpath'] = $strImgFile;
-							$reply['localfolder'] = dirname($strImgFile);
-							break;
-						case pgrep($strDdPgrep, false):
-							$reply['status'] = _('Creating image') . ' ... ';
-							break;
-						default:
-							$reply['status'] = _('Cleanup') . ' ... ';
-							break;
-					}
+			$currentState = getSetupState();
+			$isScriptRunning = pgrep($strInstallScriptPgrep, false);
+
+			if (!$isScriptRunning && $currentState !== 'Done' && !$boolCheckOnly) {
+				if (!file_exists($strInstallScript)) {
+					file_put_contents($strInstallScript, $strAllCmd);
+					chmod($strInstallScript, 0777);
+				}
+				exec($strInstallScript . ' >/dev/null 2>&1 &');
+				$isScriptRunning = pgrep($strInstallScriptPgrep, false);
+			}
+
+			if ($currentState !== 'Done' && $currentState !== '' && strpos($currentState, 'Error') === false && !$isScriptRunning) {
+				$currentState = 'Error: Process stopped unexpectedly';
+			}
+
+			switch ($currentState) {
+				case 'Done':
+					$reply['status'] = 'Done';
+					$reply['localpath'] = $strImgFile;
+					$reply['localfolder'] = dirname($strImgFile);
+					// Cleanup pending state
+					unset($arrUnRAIDConfig['pending_version'], $arrUnRAIDConfig['pending_name'], $arrUnRAIDConfig['pending_download_path'], $arrUnRAIDConfig['pending_size']);
+					$arrUnRAIDConfig[$_POST['download_version']] = $strImgFile;
+					saveUnRAIDConfig($arrUnRAIDConfig);
+					@unlink($strStateFile);
+					@unlink($strInstallScript);
 					break;
 				
-				case file_exists($strZipFile):
-					switch (true) {
-						case pgrep($strDownloadPgrep, false):
-							$intSize = filesize($strZipFile);
-							$strPercent = $intSize > 0 ? round(($intSize / $arrDownloadUnRAID['size']) * 100) : 0;
-							$reply['status'] = _('Downloading') . ' ... ' . $strPercent . '%';
-							break;
-						case pgrep($strExtractPgrep, false):
-							$reply['status'] = _('Downloading') . ' ... 100%';
-							$reply['status'] = _('Extracting') . ' ... ';
-							break;
-						default:
-							if (!pgrep($strInstallScriptPgrep, false) && !$boolCheckOnly) {
-								file_put_contents($strInstallScript, $strAllCmd);
-								chmod($strInstallScript, 0777);
-								exec($strInstallScript . ' >/dev/null 2>&1 &');
-							}
-							break;
-					}
+				case 'Downloading':
+					clearstatcache();
+					$intSize = file_exists($strZipFile) ? filesize($strZipFile) : 0;
+					if ($intSize > $arrDownloadUnRAID['size']) $intSize = $arrDownloadUnRAID['size'];
+					$strPercent = $intSize > 0 ? round(($intSize / $arrDownloadUnRAID['size']) * 100) : 0;
+					$reply['status'] = _('Downloading') . ' ... ' . $strPercent . '%';
 					break;
-				
-				case !$boolCheckOnly:
-					if (!pgrep($strInstallScriptPgrep, false)) {
-						file_put_contents($strInstallScript, $strAllCmd);
-						chmod($strInstallScript, 0777);
-						exec($strInstallScript . ' >/dev/null 2>&1 &');
+
+				case 'Downloading ... 100%':
+					$reply['status'] = _('Downloading') . ' ... 100%';
+					break;
+
+				case 'Extracting':
+					$reply['status'] = _('Downloading') . ' ... 100%<br>' . _('Extracting') . ' ... ';
+					break;
+
+				case 'Creating image':
+					$reply['status'] = _('Downloading') . ' ... 100%<br>' . _('Extracting') . ' ... 100%<br>' . _('Creating image') . ' ... ';
+					break;
+
+				case 'Formatting':
+					$reply['status'] = _('Downloading') . ' ... 100%<br>' . _('Extracting') . ' ... 100%<br>' . _('Creating image') . ' ... 100%<br>' . _('Formatting') . ' ... ';
+					break;
+
+				case 'Copying files':
+					$reply['status'] = _('Downloading') . ' ... 100%<br>' . _('Extracting') . ' ... 100%<br>' . _('Creating image') . ' ... 100%<br>' . _('Formatting') . ' ... 100%<br>' . _('Copying files') . ' ... ';
+					break;
+
+				default:
+					if (strpos($currentState, 'Error') !== false) {
+						$reply['error'] = _($currentState);
+						// Allow reset on error
+						unset($arrUnRAIDConfig['pending_version'], $arrUnRAIDConfig['pending_name'], $arrUnRAIDConfig['pending_download_path'], $arrUnRAIDConfig['pending_size']);
+						saveUnRAIDConfig($arrUnRAIDConfig);
+						@unlink($strStateFile);
+					} else {
+						$reply['status'] = _('Starting') . ' ... ';
 					}
-					$reply['status'] = _('Downloading') . ' ... ';
 					break;
 			}
 
-			$reply['pid'] = pgrep($strInstallScriptPgrep, false);
+			$reply['pid'] = $isScriptRunning;
 		}
 		echo json_encode($reply);
 		exit;
@@ -263,12 +385,7 @@
 			]
 		],
 		'usb' => [],
-		'shares' => [
-			[
-				'source' => (is_dir('/mnt/user/appdata') ? '/mnt/user/appdata/UnRAID/' : ''),
-				'target' => 'appconfig'
-			]
-		]
+		'shares' => []
 	];
 
 $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaration
@@ -291,9 +408,6 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 			}
 		} else {
 			// form view
-			if (isset($_POST['shares'][0]['source'])) {
-				@mkdir($_POST['shares'][0]['source'], 0777, true);
-			}
 			$_POST['clock'] = $arrDefaultClocks["other"] ;
 			if ($lv->domain_new($_POST)){
 				$reply = ['success' => true];
@@ -375,9 +489,6 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 			$xml = $_POST['xmldesc'];
 		} else {
 			// form view
-			if (isset($_POST['shares'][0]['source'])) {
-				@mkdir($_POST['shares'][0]['source'], 0777, true);
-			}
 			$_POST['clock'] = $arrDefaultClocks["other"] ;
 			$arrExistingConfig = custom::createArray('domain',$strXML);
 			$arrUpdatedConfig = custom::createArray('domain',$lv->config_to_xml($_POST));
@@ -458,28 +569,16 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 <input type="hidden" name="disk[0][bus]" value="usb">
 <input type="hidden" class="bootorder" name="disk[0][boot]" value="1">
 
-	<div class="installed">
+	<div class="name_section">
 		<table>
 			<tr>
 				<td>_(Name)_:</td>
-				<td><input type="text" name="domain[name]" id="domain_name" class="textTemplate" title="_(Name of virtual machine)_" placeholder="_(e.g.)_ _(UnRAID)_" value="<?=htmlspecialchars($arrConfig['domain']['name'])?>" required /></td>
+				<td><input type="text" name="domain[name]" id="domain_name" class="textTemplate narrow" title="_(Name of virtual machine)_" placeholder="_(e.g.)_ _(UnRAID)_" value="<?=htmlspecialchars($arrConfig['domain']['name'] ?: ($arrUnRAIDConfig['pending_name'] ?? ''))?>" required /></td>
 			</tr>
 		</table>
 		<blockquote class="inline_help">
 			<p>Give the VM a name (e.g. UnRAID Server, UnRAID)</p>
 		</blockquote>
-
-		<table>
-			<tr class="advanced">
-				<td>_(Description)_:</td>
-				<td><input type="text" name="domain[desc]" title="_(description of virtual machine)_" placeholder="_(description of virtual machine)_ (_(optional)_)" value="<?=htmlspecialchars($arrConfig['domain']['desc'])?>" /></td>
-			</tr>
-		</table>
-		<div class="advanced">
-			<blockquote class="inline_help">
-				<p>Give the VM a brief description (optional field).</p>
-			</blockquote>
-		</div>
 	</div>
 
 	<table>
@@ -510,7 +609,7 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 			<tr>
 				<td>_(Download Folder)_:</td>
 				<td>
-					<input type="text" autocomplete="off" spellcheck="false" data-pickfolders="true" data-pickfilter="NO_FILES_FILTER" data-pickroot="/mnt/" value="" id="download_path" placeholder="_(e.g.)_ /mnt/user/domains/" title="_(Folder to save the UnRAID image to)_" />
+					<input type="text" autocomplete="off" spellcheck="false" data-pickfolders="true" data-pickfilter="NO_FILES_FILTER" data-pickroot="/mnt/" value="<?=htmlspecialchars($arrUnRAIDConfig['pending_download_path'] ?? '')?>" id="download_path" class="narrow" placeholder="_(e.g.)_ /mnt/user/domains/" title="_(Folder to save the UnRAID image to)_" />
 				</td>
 			</tr>
 		</table>
@@ -520,9 +619,28 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 
 		<table>
 			<tr>
+				<td>_(Image Size)_:</td>
+				<td>
+					<select id="download_size" class="narrow">
+					<?
+						for ($i = 1; $i <= 32; $i *= 2) {
+							echo mk_option($arrUnRAIDConfig['pending_size'] ?? 2, $i, $i . ' GB');
+						}
+					?>
+					</select>
+				</td>
+			</tr>
+		</table>
+		<blockquote class="inline_help">
+			<p>Select the size of the UnRAID image to create.</p>
+		</blockquote>
+
+		<table>
+			<tr>
 				<td></td>
 				<td>
-					<input type="button" value="_(Download)_" busyvalue="_(Downloading)_..." readyvalue="_(Download)_" id="btnDownload" /><span id="download_status"></span>
+					<input type="button" value="_(Download)_" busyvalue="_(Downloading)_..." readyvalue="_(Download)_" id="btnDownload" />
+					<div id="download_status" style="margin-top: 10px;"></div>
 				</td>
 			</tr>
 		</table>
@@ -530,17 +648,17 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 
 	<div class="installed">
 		<table>
-			<tr>
-				<td>_(Config Folder)_:</td>
-				<td>
-					<input type="text" data-pickfolders="true" data-pickfilter="NO_FILES_FILTER" data-pickroot="/mnt/" value="<?=htmlspecialchars($arrConfig['shares'][0]['source'])?>" name="shares[0][source]" placeholder="_(e.g.)_ /mnt/user/appdata/unraid" title="_(path on Unraid share to save UnRAID settings)_" required/>
-					<input type="hidden" value="<?=htmlspecialchars($arrConfig['shares'][0]['target'])?>" name="shares[0][target]" />
-				</td>
+			<tr class="advanced">
+				<td>_(Description)_:</td>
+				<td><input type="text" name="domain[desc]" title="_(description of virtual machine)_" placeholder="_(description of virtual machine)_ (_(optional)_)" value="<?=htmlspecialchars($arrConfig['domain']['desc'])?>" /></td>
 			</tr>
 		</table>
-		<blockquote class="inline_help">
-			<p>Choose a folder or type in a new name off of an existing folder to specify where UnRAID will save configuration files.  If you create multiple UnRAID VMs, these Config Folders must be unique for each instance.</p>
-		</blockquote>
+		<div class="advanced">
+			<blockquote class="inline_help">
+				<p>Give the VM a brief description (optional field).</p>
+			</blockquote>
+		</div>
+
 
 		<table>
 			<tr class="advanced">
@@ -1474,27 +1592,34 @@ $(function() {
 		var postdata = {
 			download_version: $('#vmform #template_unraid').val(),
 			download_path: $('#vmform #download_path').val(),
+			vm_name: $('#vmform #domain_name').val(),
+			download_size: $('#vmform #download_size').val(),
 			checkonly: ((typeof checkonly === 'undefined') ? false : !!checkonly) ? 1 : 0
 		};
 
-		$form.find('input').prop('disabled', true);
+		$form.find('input,select').prop('disabled', true);
 		$button.val($button.attr('busyvalue'));
 
 		$.post("/plugins/dynamix.vm.manager/templates/UnRAID.form.php", postdata, function( data ) {
 			if (data.error) {
-				$("#vmform #download_status").html($("#vmform #download_status").html() + '<br><span style="color: red">' + data.error + '</span>');
+				$("#vmform #download_status").html('<span style="color: red">' + data.error + '</span><br><input type="button" value="_(Retry)_" id="btnRetryDownload"> <input type="button" value="_(Reset)_" id="btnResetSetup">');
+				$("#vmform #btnRetryDownload").click(function() {
+					checkOrInitDownload(false);
+				});
+				$("#vmform #btnResetSetup").click(function() {
+					$.post("/plugins/dynamix.vm.manager/templates/UnRAID.form.php", {reset_setup: 1}, function() {
+						location.reload();
+					});
+				});
 			} else if (data.status) {
-				var old_list = $("#vmform #download_status").html().split('<br>');
-
-				if (old_list.pop().split(' ... ').shift() == data.status.split(' ... ').shift()) {
-					old_list.push(data.status);
-					$("#vmform #download_status").html(old_list.join('<br>'));
+				if (data.status === 'Done') {
+					$("#vmform #download_status").html('Done');
 				} else {
-					$("#vmform #download_status").html($("#vmform #download_status").html() + '<br>' + data.status);
+					$("#vmform #download_status").html(data.status);
 				}
 
 				if (data.pid) {
-					checkDownloadTimer = setTimeout(checkOrInitDownload, 1000);
+					checkDownloadTimer = setTimeout(function() { checkOrInitDownload(true); }, 1000);
 					return;
 				}
 
@@ -1509,7 +1634,10 @@ $(function() {
 			}
 
 			$button.val($button.attr('readyvalue'));
-			$form.find('input').prop('disabled', false);
+			$form.find('input,select').prop('disabled', false);
+			if (data.status && data.status !== 'Done') {
+				$('#vmform #template_unraid, #vmform #download_path, #vmform #domain_name, #vmform #download_size').prop('disabled', true);
+			}
 		}, "json");
 	};
 
@@ -1522,15 +1650,22 @@ $(function() {
 		clearTimeout(checkDownloadTimer);
 
 		$selected = $(this).find('option:selected');
+		var pending_version = "<?=($arrUnRAIDConfig['pending_version'] ?? '')?>";
+		if (pending_version !== '' && pending_version !== $selected.val()) {
+			$(this).val(pending_version);
+			$selected = $(this).find('option:selected');
+		}
 
-		if ($selected.attr('valid') === '0') {
+		if ($selected.attr('valid') === '0' && <?=$boolNew ? 'true' : 'false'?>) {
 			$("#vmform .available").slideDown('fast');
 			$("#vmform .installed").slideUp('fast');
-			$("#vmform #download_status").html('');
-			$("#vmform #download_path").val($selected.attr('localfolder'));
-			if ($selected.attr('localpath') !== '') {
-				// Check status of current running job (but dont initiate a new download)
+			if (pending_version === $selected.val()) {
 				checkOrInitDownload(true);
+			} else {
+				$("#vmform #download_status").html('');
+				$("#vmform #download_path").val($selected.attr('localfolder'));
+				$("#vmform .name_section input").prop('disabled', false);
+				$("#vmform .available input, #vmform .available select").prop('disabled', false);
 			}
 		} else {
 			$("#vmform .available").slideUp('fast');
