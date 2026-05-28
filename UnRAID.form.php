@@ -113,6 +113,19 @@
 
 	if (isset($_POST['reset_setup'])) {
 		@header('Content-Type: application/json');
+		$pending_version = $arrUnRAIDConfig['pending_version'] ?? '';
+		if ($pending_version && array_key_exists($pending_version, $arrUnRAIDVersions)) {
+			$arrDownloadUnRAID = $arrUnRAIDVersions[$pending_version];
+			$strDownloadPath = $arrUnRAIDConfig['pending_download_path'] ?? '';
+			if ($strDownloadPath) {
+				$strCleanUrl = explode('?', $arrDownloadUnRAID['url'])[0];
+				@unlink($strDownloadPath . basename($strCleanUrl));
+				@unlink($strDownloadPath . basename($strCleanUrl, 'zip') . 'img.tmp');
+				@unlink($strDownloadPath . basename($strCleanUrl) . '.log');
+			}
+			exec('pkill -f "UnRAID_' . $pending_version . '_install.sh"');
+			@exec("rm -rf " . escapeshellarg('/tmp/UNRAID_' . $pending_version));
+		}
 		unset($arrUnRAIDConfig['pending_version'], $arrUnRAIDConfig['pending_name'], $arrUnRAIDConfig['pending_download_path'], $arrUnRAIDConfig['pending_size']);
 		saveUnRAIDConfig($arrUnRAIDConfig);
 		@unlink($strStateFile);
@@ -158,9 +171,10 @@
 			$strInstallScript = '/tmp/UnRAID_' . $_POST['download_version'] . '_install.sh';
 			$strInstallScriptPgrep = '-f "UnRAID_' . $_POST['download_version'] . '_install.sh"';
 			$strDownloadPath = $arrUnRAIDConfig['pending_download_path'] ?? $_POST['download_path'];
-			$strZipFile = $strDownloadPath . basename($arrDownloadUnRAID['url']);
+			$strCleanUrl = explode('?', $arrDownloadUnRAID['url'])[0];
+			$strZipFile = $strDownloadPath . basename($strCleanUrl);
 			$strLogFile = $strZipFile . '.log';
-			$strImgFile = $strDownloadPath . basename($arrDownloadUnRAID['url'], 'zip') . 'img';
+			$strImgFile = $strDownloadPath . basename($strCleanUrl, 'zip') . 'img';
 			$strImgTmpFile = $strImgFile . '.tmp';
 			$strExtractTmpDir = '/tmp/UNRAID_' . $_POST['download_version'];
 			$img_size_gb = $arrUnRAIDConfig['pending_size'] ?? 32;
@@ -185,35 +199,29 @@
 
 			{
 			  if [ ! -f "{$strImgFile}" ]; then
-			    if [ ! -f "{$strZipFile}" ]; then
-			      update_state "Downloading"
-			      wget -nv -c -O "{$strZipFile}" "{$arrDownloadUnRAID['url']}" || error_exit "Download failed"
-			    fi
+			    update_state "Downloading"
+			    wget -nv -c -O "{$strZipFile}" "{$arrDownloadUnRAID['url']}" || error_exit "Download failed"
 
-			    if [ ! -d "{$strExtractTmpDir}" ]; then
-			      update_state "Extracting"
-			      mkdir -p "{$strExtractTmpDir}"
-			      unzip -o "{$strZipFile}" -d "{$strExtractTmpDir}" || error_exit "Extraction failed"
-			    fi
+			    update_state "Extracting"
+			    mkdir -p "{$strExtractTmpDir}"
+			    unzip -o "{$strZipFile}" -d "{$strExtractTmpDir}" || error_exit "Extraction failed"
 
-			    if [ ! -f "{$strImgTmpFile}" ]; then
-			      update_state "Creating image"
-			      dd if=/dev/zero of="{$strImgTmpFile}" bs=1M count=$(({$img_size_gb} * 1024)) || error_exit "Image creation failed"
-			      parted "{$strImgTmpFile}" --script mklabel msdos && parted "{$strImgTmpFile}" --script mkpart primary fat32 1MiB 100% || error_exit "Partitioning failed"
+			    update_state "Creating image"
+			    dd if=/dev/zero of="{$strImgTmpFile}" bs=1M count=$(({$img_size_gb} * 1024)) conv=fsync || error_exit "Image creation failed"
+			    parted "{$strImgTmpFile}" --script mklabel msdos && parted "{$strImgTmpFile}" --script mkpart primary fat32 1MiB 100% || error_exit "Partitioning failed"
 
-			      LOOP_DEVICE=\$(losetup --find --show --partscan "{$strImgTmpFile}")
-			      PARTITION="\${LOOP_DEVICE}p1"
+			    LOOP_DEVICE=\$(losetup --find --show --partscan "{$strImgTmpFile}")
+			    PARTITION="\${LOOP_DEVICE}p1"
 
-			      update_state "Formatting"
-			      mkfs.vfat -F 32 -n UNRAIDVM "\$PARTITION" || error_exit "Formatting failed"
-			      "{$strExtractTmpDir}/syslinux/syslinux_linux" -f --install "\$PARTITION" 1>/dev/null 2>/dev/null || error_exit "Syslinux installation failed"
-			      sed -i 's/\bappend\b/append unraidlabel=UNRAIDVM/g' "{$strExtractTmpDir}/syslinux/syslinux.cfg"
+			    update_state "Formatting"
+			    mkfs.vfat -F 32 -n UNRAIDVM "\$PARTITION" || error_exit "Formatting failed"
+			    "{$strExtractTmpDir}/syslinux/syslinux_linux" -f --install "\$PARTITION" 1>/dev/null 2>/dev/null || error_exit "Syslinux installation failed"
+			    sed -i 's/\bappend\b/append unraidlabel=UNRAIDVM/g' "{$strExtractTmpDir}/syslinux/syslinux.cfg"
 
-			      update_state "Copying files"
-			      mcopy -i "\$PARTITION" -s "{$strExtractTmpDir}/"* ::/ || error_exit "File copy failed"
-			      losetup -d "\$LOOP_DEVICE"
-			      mv "{$strImgTmpFile}" "{$strImgFile}"
-			    fi
+			    update_state "Copying files"
+			    mcopy -i "\$PARTITION" -s "{$strExtractTmpDir}/"* ::/ || error_exit "File copy failed"
+			    losetup -d "\$LOOP_DEVICE"
+			    mv "{$strImgTmpFile}" "{$strImgFile}"
 			  fi
 
 			  chmod 777 "{$strDownloadPath}" "{$strImgFile}"
@@ -265,7 +273,7 @@
 					$strPercent = $intSize > 0 ? round(($intSize / $arrDownloadUnRAID['size']) * 100) : 0;
 					$reply['status'] = _('Downloading') . ' ... ' . $strPercent . '%';
 					break;
-				
+
 				case 'Extracting':
 					$reply['status'] = _('Extracting') . ' ... ';
 					break;
@@ -1584,7 +1592,10 @@ $(function() {
 
 		$.post("/plugins/dynamix.vm.manager/templates/UnRAID.form.php", postdata, function( data ) {
 			if (data.error) {
-				$("#vmform #download_status").html('<span style="color: red">' + data.error + '</span><br><input type="button" value="_(Retry)_" onclick="checkOrInitDownload(false)"> <input type="button" value="_(Reset)_" id="btnResetSetup">');
+				$("#vmform #download_status").html('<span style="color: red">' + data.error + '</span><br><input type="button" value="_(Retry)_" id="btnRetryDownload"> <input type="button" value="_(Reset)_" id="btnResetSetup">');
+				$("#vmform #btnRetryDownload").click(function() {
+					checkOrInitDownload(false);
+				});
 				$("#vmform #btnResetSetup").click(function() {
 					$.post("/plugins/dynamix.vm.manager/templates/UnRAID.form.php", {reset_setup: 1}, function() {
 						location.reload();
