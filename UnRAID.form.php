@@ -573,7 +573,7 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 		<table>
 			<tr>
 				<td>_(Name)_:</td>
-				<td><input type="text" name="domain[name]" id="domain_name" class="textTemplate" title="_(Name of virtual machine)_" placeholder="_(e.g.)_ _(UnRAID)_" value="<?=htmlspecialchars($arrConfig['domain']['name'] ?: ($arrUnRAIDConfig['pending_name'] ?? ''))?>" required /></td>
+				<td><input type="text" name="domain[name]" id="domain_name" class="textTemplate narrow" title="_(Name of virtual machine)_" placeholder="_(e.g.)_ _(UnRAID)_" value="<?=htmlspecialchars($arrConfig['domain']['name'] ?: ($arrUnRAIDConfig['pending_name'] ?? ''))?>" required /></td>
 			</tr>
 		</table>
 		<blockquote class="inline_help">
@@ -609,7 +609,7 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 			<tr>
 				<td>_(Download Folder)_:</td>
 				<td>
-					<input type="text" autocomplete="off" spellcheck="false" data-pickfolders="true" data-pickfilter="NO_FILES_FILTER" data-pickroot="/mnt/" value="<?=htmlspecialchars($arrUnRAIDConfig['pending_download_path'] ?? '')?>" id="download_path" placeholder="_(e.g.)_ /mnt/user/domains/" title="_(Folder to save the UnRAID image to)_" />
+					<input type="text" autocomplete="off" spellcheck="false" data-pickfolders="true" data-pickfilter="NO_FILES_FILTER" data-pickroot="/mnt/" value="<?=htmlspecialchars($arrUnRAIDConfig['pending_download_path'] ?? '')?>" id="download_path" class="narrow" placeholder="_(e.g.)_ /mnt/user/domains/" title="_(Folder to save the UnRAID image to)_" />
 				</td>
 			</tr>
 		</table>
@@ -621,7 +621,7 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 			<tr>
 				<td>_(Image Size)_:</td>
 				<td>
-					<select id="download_size">
+					<select id="download_size" class="narrow">
 					<?
 						for ($i = 1; $i <= 32; $i *= 2) {
 							echo mk_option($arrUnRAIDConfig['pending_size'] ?? 2, $i, $i . ' GB');
@@ -639,7 +639,8 @@ $hdrXML = "<?xml version='1.0' encoding='UTF-8'?>\n"; // XML encoding declaratio
 			<tr>
 				<td></td>
 				<td>
-					<input type="button" value="_(Download)_" busyvalue="_(Downloading)_..." readyvalue="_(Download)_" id="btnDownload" /><span id="download_status"></span>
+					<input type="button" value="_(Download)_" busyvalue="_(Downloading)_..." readyvalue="_(Download)_" id="btnDownload" />
+					<div id="download_status" style="margin-top: 10px;"></div>
 				</td>
 			</tr>
 		</table>
