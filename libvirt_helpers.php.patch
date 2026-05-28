@@ -1,40 +1,55 @@
 --- /usr/local/emhttp/plugins/dynamix.vm.manager/include/libvirt_helpers.php.original
 +++ /usr/local/emhttp/plugins/dynamix.vm.manager/include/libvirt_helpers.php
-@@
+@@ -431,6 +431,11 @@
+		'Ubuntu' => [
+			'form' => 'Custom.form.php',
+			'icon' => 'ubuntu.png',
+			'os' => 'ubuntu'
+		],
++
++		'UnRAID' => [
++			'form' => 'UnRAID.form.php',
++			'icon' => 'unraid.png'
++		],
+
+
+ 		' Linux ' => '', /* Linux Header */
+@@ -428,6 +433,10 @@
  			'icon' => 'ubuntu.png',
  			'os' => 'ubuntu'
  		],
++		'UnRAID' => [
++			'form' => 'UnRAID.form.php',
++			'icon' => 'unraid.png'
++		],
+ 		'VyOS' => [
+ 			'form' => 'Custom.form.php',
+ 			'icon' => 'vyos.png',
+@@ -441,6 +450,27 @@
+ 			'icon' => 'default.png'
+ 		]
+ 	];
 +
-+	'UnRAID' => [
-+		'form' => 'UnRAID.form.php',
-+		'icon' => 'unraid.png'
-+	],
-@@
- ];
++	$arrUnRAIDVersions = json_decode(file_get_contents('https://releases.unraid.net/usb-creator'), true);
++	$arrUnRAIDVersions = array_merge(...array_map(
++		fn($os) => $os['subitems'] ?? [$os],
++		$arrUnRAIDVersions['os_list']
++	));
 +
-+$arrUnRAIDVersions = [];
-+$rawJson = @file_get_contents('https://releases.unraid.net/usb-creator');
-+if ($rawJson !== false) {
-+    $decoded = json_decode($rawJson, true);
-+    if (is_array($decoded) && isset($decoded['os_list'])) {
-+        $flat = array_merge(...array_map(
-+            fn($os) => $os['subitems'] ?? [$os],
-+            $decoded['os_list']
-+        ));
-+        $arrUnRAIDVersions = array_column(
-+            array_map(
-+                fn($item) => [
-+                    'name'      => substr($item['name'], 7),
-+                    'url'       => $item['url'],
-+                    'size'      => $item['image_download_size'],
-+                    'localpath' => '',
-+                    'valid'     => 0
-+                ],
-+                array_filter($flat, fn($item) => $item['name'] !== 'Unraid OS Releases (Next Branch)')
-+            ),
-+            null,
-+            'name'
-+        );
-+        uksort($arrUnRAIDVersions, fn($a, $b) => version_compare($b, $a));
-+    }
-+}
++	$arrUnRAIDVersions = array_column(
++		array_map(
++			fn($item) => [
++				'name' => substr($item['name'], 7),
++				'url' => $item['url'],
++				'size' => $item['image_download_size'],
++				'localpath' => '',
++				'valid' => 0
++			],
++			array_filter($arrUnRAIDVersions, fn($item) => $item['name'] !== 'Unraid OS Releases (Next Branch)')
++		),
++		null,
++		'name'
++	);
+
+
+ 	$fedora = '/var/tmp/fedora-virtio-isos';
